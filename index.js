@@ -14,8 +14,13 @@ app.listen(10000, () => console.log("Server aktif (port 10000)"));
 // -------------------------------------------------------
 const bot = new Telegraf(process.env.BOT_TOKEN);
 
-bot.start((ctx) => ctx.reply("Merhaba! Bot çalışıyor 🚀\nBana bir fotoğraf gönder, AI mı değil mi analiz edeyim."));
-bot.help((ctx) => ctx.reply("Bana fotoğraf gönder, ELA analizi yapayım."));
+bot.start((ctx) =>
+  ctx.reply(
+    "Merhaba! Bot çalışıyor 🚀\nBana bir fotoğraf veya PNG gönder, AI mı değil mi analiz edeyim."
+  )
+);
+
+bot.help((ctx) => ctx.reply("Sadece fotoğraf gönder, analiz edeyim!"));
 
 // -------------------------------------------------------
 // ELA ANALİZ FONKSİYONU
@@ -23,13 +28,12 @@ bot.help((ctx) => ctx.reply("Bana fotoğraf gönder, ELA analizi yapayım."));
 async function elaAnalysis(imageBuffer) {
   const original = await Jimp.read(imageBuffer);
 
-  // JPEG olarak yeniden sıkıştır (ELA mantığı)
+  // JPEG olarak yeniden sıkıştır
   const temp = await original.clone().quality(90);
 
-  // Fark hesaplamak için boş bir clone oluştur
+  // Fark görüntüsü oluştur
   const diff = await original.clone();
 
-  // Her pikselin farkını hesapla
   diff.scan(0, 0, diff.bitmap.width, diff.bitmap.height, function (x, y, idx) {
     const r1 = original.bitmap.data[idx + 0];
     const g1 = original.bitmap.data[idx + 1];
@@ -44,10 +48,13 @@ async function elaAnalysis(imageBuffer) {
     this.bitmap.data[idx + 2] = Math.abs(b1 - b2) * 10;
   });
 
-  // Fark ortalamasını çıkart (ELA skoru)
+  // Fark ortalaması
   let total = 0;
   diff.scan(0, 0, diff.bitmap.width, diff.bitmap.height, function (x, y, idx) {
-    total += this.bitmap.data[idx] + this.bitmap.data[idx + 1] + this.bitmap.data[idx + 2];
+    total +=
+      this.bitmap.data[idx] +
+      this.bitmap.data[idx + 1] +
+      this.bitmap.data[idx + 2];
   });
 
   const avg = total / (diff.bitmap.width * diff.bitmap.height * 3);
@@ -55,7 +62,7 @@ async function elaAnalysis(imageBuffer) {
 }
 
 // -------------------------------------------------------
-// FOTOĞRAF ANALİZİ
+// TELEGRAM - PHOTO ANALİZ
 // -------------------------------------------------------
 bot.on("photo", async (ctx) => {
   try {
@@ -63,14 +70,13 @@ bot.on("photo", async (ctx) => {
 
     const fileId = ctx.message.photo.pop().file_id;
     const fileLink = await ctx.telegram.getFileLink(fileId);
-
     const response = await fetch(fileLink);
-    const imageBuffer = Buffer.from(await response.arrayBuffer());
+    const buffer = Buffer.from(await response.arrayBuffer());
 
-    const score = await elaAnalysis(imageBuffer);
+    const score = await elaAnalysis(buffer);
 
     let result = "";
-    if (score < 5) result = "🌿 Görüntü büyük ihtimalle GERÇEK.";
+    if (score < 5) result = "🌿 Bu görüntü büyük ihtimalle GERÇEK.";
     else if (score < 15) result = "⚠️ Şüpheli! Hem gerçek hem yapay olabilir.";
     else result = "🤖 Bu görüntü BÜYÜK İHTİMALLE yapay zeka ile üretilmiş.";
 
@@ -78,10 +84,48 @@ bot.on("photo", async (ctx) => {
       `📊 *ELA Skoru:* ${score.toFixed(2)}\n\n${result}`,
       { parse_mode: "Markdown" }
     );
-
   } catch (err) {
     console.error(err);
-    ctx.reply("❌ Analiz sırasında hata oluştu.");
+    ctx.reply("❌ Fotoğraf analiz edilirken bir hata oluştu.");
+  }
+});
+
+// -------------------------------------------------------
+// TELEGRAM - DOCUMENT (PNG/JPG) ANALİZ
+// -------------------------------------------------------
+bot.on("document", async (ctx) => {
+  try {
+    const file = ctx.message.document;
+
+    // Sadece PNG ve JPG kabul edelim
+    if (
+      !file.mime_type.includes("png") &&
+      !file.mime_type.includes("jpg") &&
+      !file.mime_type.includes("jpeg")
+    ) {
+      return ctx.reply("❌ Bu dosya bir görüntü değil. PNG veya JPG gönder.");
+    }
+
+    await ctx.reply("🔍 PNG/JPG dosyası alındı. Analiz ediliyor...");
+
+    const fileLink = await ctx.telegram.getFileLink(file.file_id);
+    const response = await fetch(fileLink);
+    const buffer = Buffer.from(await response.arrayBuffer());
+
+    const score = await elaAnalysis(buffer);
+
+    let result = "";
+    if (score < 5) result = "🌿 Görüntü büyük ihtimalle GERÇEK.";
+    else if (score < 15) result = "⚠️ Şüpheli! Hem gerçek hem yapay olabilir.";
+    else result = "🤖 Görüntü büyük ihtimalle YAPAY ZEKA.";
+
+    await ctx.reply(
+      `📊 *ELA Skoru:* ${score.toFixed(2)}\n\n${result}`,
+      { parse_mode: "Markdown" }
+    );
+  } catch (err) {
+    console.error(err);
+    ctx.reply("❌ Analiz sırasında hata oluştu (document).");
   }
 });
 
